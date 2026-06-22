@@ -1,0 +1,501 @@
+import { useState, useEffect, useRef } from "react";
+
+const FREE = { papers: 5, quizzes: 2, flashcards: 15, words: 300 };
+
+const todayKey = () => `pt_${new Date().toISOString().split("T")[0]}`;
+const wc = (t) => t.trim().split(/\s+/).filter(Boolean).length;
+
+const CSS = `
+@keyframes spin { to { transform:rotate(360deg); } }
+@keyframes fadeIn { from{opacity:0;transform:translateY(5px);} to{opacity:1;transform:translateY(0);} }
+
+.pta { animation:fadeIn .22s ease; }
+.pt-flip { perspective:900px; height:210px; cursor:pointer; user-select:none; }
+.pt-inner { position:relative; width:100%; height:100%; transform-style:preserve-3d; transition:transform .44s ease; }
+.pt-inner.f { transform: rotateY(180deg); }
+.pt-face { position:absolute; inset:0; backface-visibility:hidden; -webkit-backface-visibility:hidden; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px; border-radius:var(--border-radius-lg); border:.5px solid var(--color-border-tertiary); }
+.pt-front { background:var(--color-background-secondary); }
+.pt-back { background:#FAEEDA; transform:rotateY(180deg); }
+
+.pt-tab { background:none; border:none; border-bottom:2px solid transparent; padding:10px 16px; cursor:pointer; font-size:14px; color:var(--color-text-secondary); transition:all .15s; font-family:inherit; white-space:nowrap; }
+.pt-tab.on { color:var(--color-text-primary); border-bottom-color:#EF9F27; font-weight:500; }
+.pt-tab:hover:not(.on) { color:var(--color-text-primary); }
+
+.pt-mode { border-radius:8px; padding:8px 13px; font-size:13px; cursor:pointer; color:var(--color-text-secondary); transition:all .15s; font-family:inherit; display:inline-flex; align-items:center; gap:7px; }
+.pt-mode.on { border-color:#EF9F27; color:#633806; background:#FAEEDA50; font-weight:500; }
+.pt-mode:hover:not(.on) { border-color:var(--color-border-secondary); color:var(--color-text-primary); }
+
+.pt-opt { display:block; width:100%; text-align:left; padding:11px 14px; border:.5px solid var(--color-border-tertiary); border-radius:8px; background:var(--color-background-primary); color:var(--color-text-primary); cursor:pointer; font-size:14px; margin-bottom:8px; transition:border-color .12s, background .12s; font-family:inherit; }
+.pt-opt:hover:not(:disabled) { border-color:var(--color-border-secondary); }
+.pt-opt.sel { border-color:var(--color-border-primary); background:var(--color-color-background-secondary); font-weight:500; }
+.pt-opt.good { border-color:#633922; background:#EAF3DE; color:#27500A; }
+.pt-opt.bad { border-color:#A32D2D; background:#FCEBEB; color:#501313; }
+
+.pt-btn { background:var(--color-background-primary); border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; color:var(--color-text-primary); transition:background .12s, opacity .12s; font-family:inherit; }
+.pt-btn:hover { background:var(--color-background-secondary); }
+.pt-btn:disabled { opacity:.35; cursor:not-allowed; }
+
+.pt-primary { background:var(--color-text-primary); color:var(--color-background-primary); border:none; border-radius:8px; padding:10px 20px; font-size:14px; font-weight:500; cursor:pointer; transition:opacity .12s; font-family:inherit; }
+.pt-primary:hover { opacity:.82; }
+.pt-primary:disabled { opacity:.35; cursor:not-allowed; }
+
+.pt-dot { width:7px; height:7px; border-radius:50%; background:var(--color-border-primary); cursor:pointer; border:none; padding:0; transition:background .12s; shrink:0; }
+.pt-dot.on { background:#EF9F27; }
+
+.pt-banner { border:.5px solid var(--color-border-tertiary); border-radius:var(--border-radius-lg); padding:20px; margin-top:28px; display:flex; align-items:center; gap:16px; background:var(--color-background-secondary); }
+.pt-concept { display:inline-block; background:var(--color-background-secondary); border:.5px solid var(--color-border-tertiary); color:var(--color-text-secondary); font-size:12px; padding:3px 10px; border-radius:20px; margin:3px; }
+.pt-spinner { width:36px; height:36px; border:2px solid var(--color-border-tertiary); border-top-color:#EF9F27; border-radius:50%; animation:spin .75s linear infinite; margin:0 auto 20px; }
+
+.pt-drop { border:1.5px dashed var(--color-border-secondary); border-radius:var(--border-radius-lg); padding:28px 20px; text-align:center; cursor:pointer; transition:border-color .15s, background .15s; }
+.pt-drop:hover, .pt-drop.drag { border-color:#EF9F27; background:#FAEEDA10; }
+
+.pt-plan { flex:1; border:.5px solid var(--color-border-tertiary); border-radius:var(--border-radius-lg); padding:18px; cursor:pointer; transition:all .15s; text-align:center; }
+.pt-plan.on { border-color:#EF9F27; background:#FAEEDA28; }
+.pt-plan:hover:not(.on) { border-color:var(--color-border-secondary); }
+
+.pt-usage { background:var(--color-background-secondary); border:.5px solid var(--color-border-tertiary); border-radius:var(--border-radius-md); padding:10px 14px; margin-top:14px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.pt-feature { display:flex; align-items:center; gap:9px; padding:13px 14px; border:.5px solid var(--color-border-tertiary); border-radius:var(--border-radius-md); font-size:13px; color:var(--color-text-secondary); }
+.pt-wbar-bg { height:4px; border-radius:2px; background:var(--color-border-tertiary); margin-top:8px; overflow:hidden; }
+.pt-wbar-fill { height:100%; border-radius:2px; background:#EF9F27; transition:width .3s; }
+textarea:focus { outline:2px solid #EF9F27; outline-offset:-1px; }
+`;
+
+export default function PaperTranslate() {
+  const [view, setView] = useState("input");
+  const [mode, setMode] = useState("text");
+  const [paper, setPaper] = useState("");
+  const [imgPrev, setImgPrev] = useState(null);
+  const [imgB64, setImgB64] = useState(null);
+  const [imgMime, setImgMime] = useState(null);
+  const [drag, setDrag] = useState(false);
+  const [result, setResult] = useState(null);
+  const [tab, setTab] = useState("summary");
+  const [cardIdx, setCardIdx] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [answers, setAnswers] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+  const [quizSeen, setQuizSeen] = useState(false);
+  const [plusView, setPlusView] = useState(false);
+  const [plan, setPlan] = useState("yearly");
+  const [error, setError] = useState("");
+  const [usage, setUsage] = useState({ papers: 0, quizzes: 0, flashcards: 0 });
+
+  const fileRef = useRef(null);
+  const camRef = useRef(null);
+
+  useEffect(() => {
+    const fetchUsage = async () => {
+      try {
+        if (window.storage) {
+          const r = await window.storage.get(todayKey());
+          if (r && r.value) setUsage(JSON.parse(r.value));
+        }
+      } catch {}
+    };
+    fetchUsage();
+  }, []);
+
+  const save = async (u) => {
+    setUsage(u);
+    try {
+      if (window.storage) {
+        await window.storage.set(todayKey(), JSON.stringify(u));
+      }
+    } catch {}
+  };
+
+  const words = wc(paper);
+  const overWords = !plusView && mode === "text" && words > FREE.words;
+  const cardsLeft = Math.max(0, FREE.flashcards - usage.flashcards);
+  const quizzesLeft = Math.max(0, FREE.quizzes - usage.quizzes);
+
+  const readImg = (file) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    setImgMime(file.type);
+    const r = new FileReader();
+    r.onload = (e) => {
+      setImgPrev(e.target.result);
+      setImgB64(e.target.result.split(",")[1]);
+    };
+    r.readAsDataURL(file);
+  };
+
+  const clearImg = () => {
+    setImgPrev(null);
+    setImgB64(null);
+    setImgMime(null);
+    if (fileRef.current) fileRef.current.value = "";
+    if (camRef.current) camRef.current.value = "";
+  };
+
+  const buildPrompt = () => {
+    const numCards = plusView ? 10 : Math.min(5, cardsLeft);
+    return `Analyze this academic content. Return JSON strictly matching this schema:
+    {
+      "title": "short title",
+      "summary": "paragraphs split by \\n\\n",
+      "key_concepts": ["3-5 string items"],
+      "flashcards": [{"term":"", "definition":""}],
+      "quiz": [{"question":"", "options":["","","",""], "correct":0, "explanation":""}]
+    }
+    Requirements:
+    1. Plain-English summary (2-3 paragraphs, high-school level)
+    2. Exactly ${numCards} flashcards (term + clear definition)
+    3. 5 multiple-choice quiz questions (4 options, 1 correct)
+    ${mode === "image" ? "\n\nFirst extract all visible text from the image, then process it." : ""}`;
+  };
+
+  const translate = async () => {
+    if (mode === "image" && !imgB64) return;
+    setView("loading");
+    setError("");
+    try {
+      const content = mode === "image" 
+        ? [
+            { type: "image", source: { type: "base64", media_type: imgMime, data: imgB64 } },
+            { type: "text", text: buildPrompt() }
+          ]
+        : [{ type: "text", text: `${buildPrompt()}\n\nPaper:\n${paper}` }];
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "YOUR_API_KEY_HERE", // Provide valid client verification headers
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-3-5-sonnet-20241022",
+          max_tokens: 4000,
+          messages: [{ role: "user", content }]
+        })
+      });
+
+      const data = await res.json();
+      const raw = data.content.map(b => b.text || "").join("");
+      const cleanJson = raw.replace(/```json|```/g, "").trim();
+      const json = JSON.parse(cleanJson);
+
+      if (!plusView && json.flashcards) {
+        json.flashcards = json.flashcards.slice(0, cardsLeft);
+      }
+
+      await save({
+        ...usage,
+        papers: usage.papers + 1,
+        flashcards: usage.flashcards + (json.flashcards ? json.flashcards.length : 0)
+      });
+
+      setResult(json);
+      setView("results");
+      setTab("summary");
+      setCardIdx(0);
+      setFlipped(false);
+      setAnswers({});
+      setSubmitted(false);
+      setQuizSeen(false);
+    } catch {
+      setError("Something went wrong - please try again.");
+      setView("input");
+    }
+  };
+
+  const openTab = async (t) => {
+    setTab(t);
+    if (t === "quiz" && !quizSeen) {
+      setQuizSeen(true);
+      if (!plusView && usage.quizzes < FREE.quizzes) {
+        await save({ ...usage, quizzes: usage.quizzes + 1 });
+      }
+    }
+  };
+
+  const score = result?.quiz ? result.quiz.filter((q, i) => answers[i] === q.correct).length : 0;
+  const allAnswered = result?.quiz && Object.keys(answers).length >= result.quiz.length;
+
+  const reset = () => {
+    setView("input");
+    setResult(null);
+    clearImg();
+    setPaper("");
+  };
+
+  const Pill = ({ icon, used, max, label }) => {
+    const over = used >= max;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12 }}>
+        <i className={`ti ${icon}`} style={{ fontSize: 13, color: over ? "#A32D2D" : "var(--color-text-secondary)" }} aria-hidden="true" />
+        <span style={{ color: over ? "#A32D2D" : "var(--color-text-secondary)" }}>{used}/{max} {label}</span>
+      </div>
+    );
+  };
+
+  if (plusView) {
+    return (
+      <div style={{ maxWidth: 460, margin: "0 auto", paddingBottom: 40 }} className="pta">
+        <style>{CSS}</style>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 26 }}>
+          <button className="pt-btn" onClick={() => setPlusView(false)}>← Back</button>
+          <h2 style={{ fontSize: 18, fontWeight: 600 }}>Plus Upgrade</h2>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 26 }}>
+          <div className={`pt-plan ${plan === "monthly" ? "on" : ""}`} onClick={() => setPlan("monthly")}>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>Monthly</div>
+            <div style={{ fontSize: 22, fontWeight: 600, margin: "6px 0" }}>$3.99</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Billed monthly</div>
+          </div>
+          <div className={`pt-plan ${plan === "yearly" ? "on" : ""}`} onClick={() => setPlan("yearly")}>
+            <div style={{ fontSize: 11, color: "#633806", fontWeight: 600, marginBottom: 8, background: "#FAC775", display: "inline-block", padding: "2px 9px", borderRadius: 20 }}>Best value</div>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>Yearly</div>
+            <div style={{ fontSize: 22, fontWeight: 600, margin: "6px 0" }}>$14.99</div>
+            <div style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>/year</div>
+            <div style={{ fontSize: 11, color: "var(--color-text-secondary)", marginTop: 5 }}>Save 60%</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 28 }}>
+          {[
+            ["ti-help-circle", "Unlimited quizzes per day (free: 2/day)"],
+            ["ti-cards", "Unlimited flashcards per day (free: 15/day)"],
+            ["ti-text-size", "No word limit per paper (free: 300 words)"],
+            ["ti-printer", "Print flashcards as cut-out PDF sheets"],
+            ["ti-file-check", "Print quiz PDF with full answer key"],
+            ["ti-camera", "Unlimited photo scans - snap any paper"],
+            ["ti-device-floppy", "Save & revisit your study sets"]
+          ].map(([icon, label], i) => (
+            <div key={i} className="pt-feature">
+              <i className={`ti ${icon}`} style={{ fontSize: 16, color: "#EF9F27", flexShrink: 0 }} aria-hidden="true" />
+              <span>{label}</span>
+            </div>
+          ))}
+        </div>
+        <button className="pt-primary" style={{ width: "100%" }}>Upgrade Now</button>
+        <p style={{ fontSize: 12, color: "var(--color-text-secondary)", textAlign: "center", marginTop: 12 }}>Cancel anytime • No hidden fees</p>
+      </div>
+    );
+  }
+
+  if (view === "loading") {
+    return (
+      <div style={{ textAlign: "center", padding: "60px 20px" }} className="pta">
+        <style>{CSS}</style>
+        <div className="pt-spinner" />
+        <p style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>{mode === "image" ? "Scanning your photo..." : "Reading your paper..."}</p>
+        <p style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Generating summary, flashcards & evaluation questions...</p>
+      </div>
+    );
+  }
+
+  if (view === "results" && result) {
+    const card = result.flashcards?.[cardIdx] || result.flashcards?.[0];
+    return (
+      <div className="pta">
+        <style>{CSS}</style>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 14, borderBottom: ".5px solid var(--color-border-tertiary)", marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <i className="ti ti-microscope" style={{ fontSize: 17, color: "#EF9F27" }} aria-hidden="true" />
+            <h2 style={{ fontSize: 15, fontWeight: 600 }}>{result.title}</h2>
+          </div>
+          <button className="pt-btn" onClick={reset}>New paper</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 4, overflowX: "auto", marginBottom: 20 }}>
+          {[
+            { id: "summary", icon: "ti-file-text", label: "Plain English" },
+            { id: "flashcards", icon: "ti-cards", label: "Flashcards" },
+            { id: "quiz", icon: "ti-file-check", label: "Quiz" }
+          ].map(t => (
+            <button key={t.id} className={`pt-tab ${tab === t.id ? "on" : ""}`} onClick={() => openTab(t.id)}>
+              <i className={`ti ${t.icon}`} style={{ marginRight: 6 }} />
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "summary" && (
+          <div className="pta">
+            {result.summary.split("\n\n").filter(Boolean).map((p, i) => (
+              <p key={i} style={{ fontSize: 15, lineHeight: 1.8, marginBottom: 16 }}>{p}</p>
+            ))}
+            <div style={{ marginTop: 24 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Key Concepts</h3>
+              <div>
+                {result.key_concepts?.map((c, i) => (
+                  <span key={i} className="pt-concept">{c}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "flashcards" && (
+          <div className="pta">
+            {result.flashcards?.length === 0 ? (
+              <div className="pt-wall">
+                <p style={{ fontSize: 14, color: "var(--color-text-secondary)" }}>No flashcards available - daily limit was reached before this translation.</p>
+              </div>
+            ) : (
+              <>
+                <div className="pt-flip" onClick={() => setFlipped(!flipped)}>
+                  <div className={`pt-inner ${flipped ? "f" : ""}`}>
+                    <div className="pt-face pt-front">
+                      <p style={{ fontSize: 11, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 12 }}>term</p>
+                      <p style={{ fontSize: 20, fontWeight: 500, textAlign: "center" }}>{card?.term}</p>
+                    </div>
+                    <div className="pt-face pt-back">
+                      <p style={{ fontSize: 11, color: "#854F0B", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 12 }}>definition</p>
+                      <p style={{ fontSize: 14, lineHeight: 1.65, color: "#322006", textAlign: "center" }}>{card?.definition}</p>
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 20 }}>
+                  <button className="pt-btn" disabled={cardIdx === 0} onClick={() => { setCardIdx(cardIdx - 1); setFlipped(false); }}>Previous</button>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {result.flashcards.map((_, i) => (
+                      <button key={i} className={`pt-dot ${i === cardIdx ? "on" : ""}`} onClick={() => { setCardIdx(i); setFlipped(false); }} />
+                    ))}
+                  </div>
+                  <button className="pt-btn" disabled={cardIdx === result.flashcards.length - 1} onClick={() => { setCardIdx(cardIdx + 1); setFlipped(false); }}>Next</button>
+                </div>
+              </>
+            )}
+            <div className="pt-banner">
+              <div style={{ flex: 1 }}>
+                <h4 style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}>Print your flashcards</h4>
+                <p style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>Download custom layouts formatted for double-sided cutouts</p>
+              </div>
+              <button className="pt-btn" onClick={() => setPlusView(true)}>Unlock PDF</button>
+            </div>
+          </div>
+        )}
+
+        {tab === "quiz" && (
+          <div className="pta">
+            {submitted && (
+              <div style={{ textAlign: "center", padding: "12px 0 24px" }}>
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 4 }}>Your score</p>
+                <p style={{ fontSize: 40, fontWeight: 500, lineHeight: 1 }}>{score}<span style={{ fontSize: 18, fontWeight: 400, color: "var(--color-text-secondary)" }}>/{result.quiz.length}</span></p>
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)", marginTop: 6 }}>{score === result.quiz.length ? "Perfect score!" : score >= 3 ? "Well done!" : "Keep reviewing!"}</p>
+              </div>
+            )}
+            {result.quiz?.map((q, qi) => {
+              const picked = answers[qi];
+              return (
+                <div key={qi} style={{ marginBottom: 20, padding: 18, border: ".5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", background: "var(--color-background-primary)" }}>
+                  <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 14, lineHeight: 1.55 }}><span style={{ color: "#BA7517", marginRight: 6 }}>Q{qi + 1}.</span>{q.question}</p>
+                  <div>
+                    {q.options.map((o, oi) => {
+                      let cls = "pt-opt";
+                      if (submitted) {
+                        if (oi === q.correct) cls += " good";
+                        else if (oi === picked) cls += " bad";
+                      } else if (picked === oi) cls += " sel";
+                      return (
+                        <button key={oi} className={cls} disabled={submitted} onClick={() => setAnswers({ ...answers, [qi]: oi })}>{o}</button>
+                      );
+                    })}
+                  </div>
+                  {submitted && picked !== undefined && (
+                    <div style={{ marginTop: 10, padding: "10px 12px", background: "#EAF3DE", border: ".5px solid #C0DD97", borderRadius: 8, fontSize: 13 }}>
+                      <p style={{ color: "#27500A", lineHeight: 1.5 }}>{q.explanation}</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", gap: 10 }}>
+              {!submitted ? (
+                <button className="pt-primary" style={{ flex: 1, padding: 12 }} disabled={!allAnswered} onClick={() => setSubmitted(true)}>Submit quiz</button>
+              ) : (
+                <button className="pt-btn" style={{ flex: 1, padding: 12, textAlign: "center" }} onClick={() => { setAnswers({}); setSubmitted(false); }}>Retake quiz</button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const canTranslate = plusView || (mode === "text" ? (paper.length > 0 && !overWords) : imgB64);
+
+  return (
+    <div className="pta">
+      <style>{CSS}</style>
+      <div style={{ padding: "32px 0 26px", maxWidth: 420, margin: "0 auto", lineHeight: 1.65 }}>
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <i className="ti ti-microscope" style={{ fontSize: 32, color: "#EF9F27" }} aria-hidden="true" />
+          <p style={{ fontSize: 13, color: "var(--color-text-secondary)", textTransform: "uppercase", letterSpacing: ".06em", marginTop: 8 }}>Academic papers made human</p>
+          <h1 style={{ fontSize: 26, fontWeight: 500, lineHeight: 1.25, marginTop: 10 }}>Finally understand that paper.</h1>
+          <p style={{ fontSize: 15, color: "var(--color-text-secondary)", marginTop: 8 }}>Paste text or snap a photo. Get a plain-English summary, flip flashcards, and a quiz — instantly.</p>
+        </div>
+
+        <div style={{ display: "flex", marginBottom: 16, gap: 8 }}>
+          <button className={`pt-mode ${mode === "text" ? "on" : ""}`} onClick={() => setMode("text")}>
+            <i className="ti ti-file-text" style={{ fontSize: 14 }} aria-hidden="true" />
+            Paste text
+          </button>
+          <button className={`pt-mode ${mode === "image" ? "on" : ""}`} onClick={() => setMode("image")}>
+            <i className="ti ti-camera" style={{ fontSize: 14 }} aria-hidden="true" />
+            Photo / scan
+          </button>
+        </div>
+
+        {mode === "text" && (
+          <div>
+            <textarea style={{ width: "100%", height: 160, padding: 14, borderRadius: "var(--border-radius-lg)", border: ".5px solid var(--color-border-tertiary)", background: "var(--color-background-secondary)", color: "var(--color-text-primary)", fontSize: 14, fontFamily: "inherit", resize: "none", display: "block" }} placeholder="Paste abstract, findings, or body text here..." value={paper} onChange={(e) => setPaper(e.target.value)} />
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: overWords ? "#A32D2D" : "var(--color-text-secondary)" }}>{words} / {FREE.words} words {overWords && "• upgrade for longer texts"}</span>
+                <span style={{ fontSize: 12, color: "var(--color-text-secondary)" }}>{Math.round((words / FREE.words) * 100)}%</span>
+              </div>
+              <div className="pt-wbar-bg">
+                <div className="pt-wbar-fill" style={{ width: `${Math.min(100, (words / FREE.words) * 100)}%`, background: overWords ? "#A32D2D" : "#EF9F27" }} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "image" && (
+          <div>
+            <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => readImg(e.target.files[0])} />
+            <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => readImg(e.target.files[0])} />
+            {!imgPrev ? (
+              <div className={`pt-drop ${drag ? "drag" : ""}`} onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); readImg(e.dataTransfer.files[0]); }} onClick={() => fileRef.current?.click()}>
+                <i className="ti ti-photo" style={{ fontSize: 32, color: "var(--color-text-secondary)", display: "block", marginBottom: 12 }} aria-hidden="true" />
+                <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 4 }}>Drop an image here or tap to choose</p>
+                <p style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>Upload any screenshot, photo, or scan of a paper</p>
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 16 }}>
+                  <button className="pt-btn" style={{ fontSize: 13 }} onClick={(e) => { e.stopPropagation(); camRef.current?.click(); }}>
+                    <i className="ti ti-camera" style={{ fontSize: 13, marginRight: 6 }} aria-hidden="true" />Take photo
+                  </button>
+                  <button className="pt-btn" style={{ fontSize: 13 }} onClick={(e) => { e.stopPropagation(); fileRef.current?.click(); }}>
+                    <i className="ti ti-upload" style={{ fontSize: 13, marginRight: 6 }} aria-hidden="true" />Choose file
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ position: "relative" }}>
+                <img src={imgPrev} alt="Paper scan preview" style={{ width: "100%", maxHeight: 200, objectFit: "cover", display: "block", borderRadius: "var(--border-radius-lg)" }} />
+                <button onClick={clearImg} style={{ position: "absolute", top: 8, right: 8, background: "var(--color-background-primary)", border: ".5px solid var(--color-border-tertiary)", borderRadius: "50%", width: 26, height: 26, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {error && <p style={{ fontSize: 13, color: "var(--color-text-danger)", marginTop: 8 }}>{error}</p>}
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 24, gap: 12 }}>
+          <button className="pt-primary" style={{ flex: 1 }} disabled={!canTranslate} onClick={translate}>
+            Translate Paper →
+          </button>
+        </div>
+
+        <div className="pt-usage">
+          <Pill icon="ti-file-text" used={usage.papers} max={FREE.papers} label="papers" />
+          <Pill icon="ti-cards" used={usage.flashcards} max={FREE.flashcards} label="flashcards" />
+          <Pill icon="ti-help-circle" used={usage.quizzes} max={FREE.quizzes} label="quizzes" />
+          <button className="pt-btn" style={{ fontSize: 11, padding: "4px 10px", borderColor: "#EF9F27", color: "#EF9F27" }} onClick={() => setPlusView(true)}>Plus</button>
+        </div>
+      </div>
+    </div>
+  );
+}p
